@@ -1,0 +1,334 @@
+Sub EnhancedMailMergeToEmail()
+' Macro created by Imnoss Ltd
+' Please share freely while retaining attribution
+' Last Updated 2022-09-22
+' Please make sure you copy all the text in this code snippit box, including the function "StripToLcaseLetters" below this sub.
+' declare variables
+Dim outlookApp As Object 'Outlook.Application
+Dim outlookMail As Object 'Outlook.MailItem
+Dim outlookAccount As Object 'Outlook.Account
+Dim mm As MailMerge
+Dim df As MailMergeDataField
+Dim singleDoc As Document
+Dim lastRecordNum As Long
+Dim sendFlag As Boolean
+Dim inputDate As Date
+Dim toString As String
+Dim ccString As String
+Dim bccString As String
+Dim subjectString As String
+Dim errorString As String
+Dim contOnError As Boolean
+Dim fso As Object
+
+' identify the mail merge of the active document
+Set mm = ActiveDocument.MailMerge
+' check for the mail merge state being that of a mail merge ready To go
+If mm.State <> wdMainAndDataSource Then
+    If MsgBox("Mailmerge not set up for active document - cannot perform mailmerge. Macro will exit." & _
+            vbLf & vbLf & "Please click the Edit Recipient List button To confirm that mail merge is correctly setup for this document." _
+            , vbOKOnly + vbCritical, "Error") = vbOK Then Exit Sub
+End If
+' Give the user an opportunity To abort, and also the option To save the emails in drafts, or send immediately
+Select Case MsgBox("MailMerge To email has found " & mm.DataSource.RecordCount & " records." & vbLf & vbLf & _
+                    "Macro will ignore records that have been unchecked in the 'Edit Recipients' dialog box." & vbLf & vbLf & _
+                    "Click 'Yes' To send the emails immediately, 'No' To save the emails in draft, and 'Cancel' To abort.", _
+                    vbYesNoCancel + vbDefaultButton2 + vbQuestion, "Send Emails")
+    Case vbCancel
+        Exit Sub
+    Case vbYes
+        sendFlag = True
+    Case Else
+        sendFlag = False
+End Select
+ActiveDocument.Content.Characters(1).Select
+' set outlookApp which is used To control outlook To send an email
+' use late binding so that if the reference is not added there is not an error
+Set outlookApp = CreateObject("Outlook.Application")
+' go To the last record and record the record number
+' if records are unchecked then the last record may not equal the record count
+mm.DataSource.ActiveRecord = wdLastRecord
+lastRecordNum = mm.DataSource.ActiveRecord
+mm.DataSource.ActiveRecord = wdFirstRecord
+' loop through all the records
+Do While lastRecordNum > 0
+    ' set fields To be populated for each email
+    errorString = ""
+    toString = ""
+    ccString = ""
+    bccString = ""
+    subjectString = ""
+    ' use mailmerge To create a new document for one record (defined by mm.DataSource.ActiveRecord)
+    mm.Destination = wdSendToNewDocument
+    mm.DataSource.FirstRecord = mm.DataSource.ActiveRecord
+    mm.DataSource.LastRecord = mm.DataSource.ActiveRecord
+    mm.Execute Pause:=False
+    ' save the generated doc as a html file in the temp directory
+    Set singleDoc = ActiveDocument
+    ' extract the "MailEnvelope" from the word doc, which is an outlook email containing the contents of the doc
+    Set outlookMail = singleDoc.MailEnvelope.Item
+    ' run through all the fields in the mail merge data, when an email field is identified add the data To the appropriate field
+    For Each df In mm.DataSource.DataFields
+        ' first check for the field being populated for the active record (row), only check if there is data provided
+
+        If Trim(df.Value) <> "" Then
+
+            ' try matching the field name To accepted field names
+            Select Case StripToLcaseLetters(df.Name)
+                Case "to"
+                    ' add in the To address or addresses as they are presented in the data, if multiple To fields are present they will all be added, separated by a semicolon
+                    If InStr(1, df.Value, "@", vbBinaryCompare) > 0 Then
+                        toString = toString & ";" & df.Value
+                    Else
+                        errorString = errorString & vbCrLf & "Invalid email address in To field: " & df.Value
+                    End If
+                Case "cc"
+                    ' add in the CC address or addresses as they are presented in the data, if multiple CC fields are present they will all be added, separated by a semicolon
+                    If InStr(1, df.Value, "@", vbBinaryCompare) > 0 Then
+                        ccString = ccString & ";" & df.Value
+                    Else
+                        errorString = errorString & vbCrLf & "Invalid email address in CC field: " & df.Value
+                    End If
+                Case "bcc"
+                    ' add in the bcc address or addresses as they are presented in the data, if multiple BCC fields are present they will all be added, separated by a semicolon
+                    If InStr(1, df.Value, "@", vbBinaryCompare) > 0 Then
+                        bccString = bccString & ";" & df.Value
+                    Else
+                        errorString = errorString & vbCrLf & "Invalid email address in BCC field: " & df.Value
+                    End If
+                Case "subject"
+                    ' add in the subject as it is presented in the data
+                    If subjectString = "" Then
+                        subjectString = df.Value
+                    Else
+                        errorString = "Second subject field found containing: " & df.Value
+                    End If
+                Case "importance"
+                    ' change the importance, accepted input values are "high", "normal", and "low" (not case sensitive)
+                    ' if field is not provided, or an incorrect input value is provided, then the default is used
+                    ' default is typically "Normal", but may have been changed in Outlook Options.
+                    Select Case StripToLcaseLetters(df.Value)
+                        Case ""
+                            ' leave as default
+                        Case "low", "l"
+                            outlookMail.Importance = 0 'olImportanceLow
+                        Case "normal", "n"
+                            outlookMail.Importance = 1 'olImportanceNormal
+                        Case "high", "h"
+                            outlookMail.Importance = 2 'olImportanceHigh
+                        Case Else
+                            errorString = errorString & vbCrLf & "Importance value not recognised: " & df.Value
+                    End Select
+                Case "sensitivity"
+                    ' change the sensitivity, accepted input values are "confidential", "personal", "private", or "normal" (not case sensitive)
+                    ' if field is not provided, or an incorrect input value is provided, then the default is used
+                    ' default is typically "Normal", but may have been changed in Outlook Options.
+                    Select Case StripToLcaseLetters(df.Value)
+                        Case ""
+                            ' leave as default
+                        Case "normal"
+                            outlookMail.Sensitivity = 0 'olNormal
+                        Case "personal"
+                            outlookMail.Sensitivity = 1 'olPersonal
+                        Case "private"
+                            outlookMail.Sensitivity = 2 'olPrivate
+                        Case "confidential"
+                            outlookMail.Sensitivity = 3 'olConfidential
+                        Case Else
+                            errorString = errorString & vbCrLf & "Sensitivity value not recognised: " & df.Value
+                    End Select
+                Case "readreceipt"
+                    ' request or do not request a read receipt
+                    ' if the field contains a boolean TRUE, or any form of "true"/"yes"/"y" (case insensitive) then request a read receipt
+                    ' if the field contains a boolean FALSE, or any form of "false"/"no"/"n" (case insensitive) then do not request a read receipt
+                    ' if field is not provided, or an incorrect input value is provided, then the default is used
+                    ' default is typically To not request a read receipt, but may have been changed in Outlook Options.
+                    Select Case StripToLcaseLetters(df.Value)
+                        Case ""
+                            ' leave as default
+                        Case "true", "yes", "y"
+                            outlookMail.ReadReceiptRequested = True
+                        Case "false", "no", "n"
+                            outlookMail.ReadReceiptRequested = False
+                        Case Else
+                            errorString = errorString & vbCrLf & "Read receipt value not recognised: " & df.Value
+                    End Select
+                Case "deliveryreceipt"
+                    ' request or do not request a delivery report
+                    ' if the field contains a boolean TRUE, or any form of "true"/"yes"/"y" (case insensitive) then request a delivery report
+                    ' if the field contains a boolean FALSE, or any form of "false"/"no"/"n" (case insensitive) then do not request a delivery report
+                    ' if field is not provided, or an incorrect input value is provided, then the default is used
+                    ' default is typically To not request a delivery report, but may have been changed in Outlook Options.
+                    Select Case Trim(LCase(df.Value))
+                        Case ""
+                            ' leave as default
+                        Case "true", "yes", "y"
+                            outlookMail.OriginatorDeliveryReportRequested = True
+                        Case "false", "no", "n"
+                            outlookMail.OriginatorDeliveryReportRequested = False
+                        Case Else
+                            errorString = errorString & vbCrLf & "Delivery receipt value not recognised: " & df.Value
+                    End Select
+                Case "deliverytime", "delaydelivery"
+                    ' add in a delivery time (delay delivery)
+                    ' checks for the field containin a value or something which looks like a date and/or time
+                    ' if a datetime is provided, and that datetime is in the future then the delay is added To that datetime
+                    ' if a date is provided, and that date is in the future then the delay is added To midnight at the start of the provided date
+                    ' if a time is provided then the next instance of that time will be used To define the delay (so email could be sent "tomorrow" if time already passed)
+                    ' if no data, invalid data, or a date/datetime in the past is added then no delivery delay is added
+                    If (IsNumeric(df.Value) Or IsDate(df.Value)) Then
+                        ' A date passed from an Excel table through mail merge will be formatted in US format ("m/d/yyyy"), but the function CDate
+                        ' uses the local format, e.g. ("d/m/yyyy"). However, CDate will convert both "15/1/2021" and "1/15/2021" To 15 January 2021
+                        ' irrespecitve of location settings.
+                        ' The next couple of lines test for whether the date is the wrong way round and flips the month and day if needed
+                        ' A date is believed To be wrong if both month and day are 12 or lower, if CDate parses the date 1/2/2020 as 1 February 2020
+                        ' and finally if the raw input from Excel is a date string (and not a number, which would be valid)
+                        inputDate = CDate(df.Value)
+                        If Day(inputDate) <= 12 And Month(inputDate) <= 12 And Month(CDate("1/2/2020")) = 2 And _
+                                (df.Value Like Format(inputDate, "d/m/yyyy") & "*" Or df.Value Like Format(inputDate, "dd/mm/yyyy") & "*") Then
+                            inputDate = DateSerial(Year(inputDate), Day(inputDate), Month(inputDate)) + TimeSerial(Hour(inputDate), Minute(inputDate), Second(inputDate))
+                        End If
+                        If inputDate < Now() - Date Then      ' time only, time is in the past so set time for "tomorrow"
+                            outlookMail.DeferredDeliveryTime = Date + 1 + inputDate
+                        ElseIf inputDate < 1 Then             ' time only, time is in the future so set time for "today"
+                            outlookMail.DeferredDeliveryTime = Date + inputDate
+                        ElseIf inputDate > Now() Then         ' date or datetime in the future
+                            outlookMail.DeferredDeliveryTime = inputDate
+                        End If
+                    Else
+                        errorString = errorString & vbCrLf & "Delivery time value not recognised: " & df.Value
+                    End If
+                Case "account"
+                    ' select the account from which the email is To be sent
+                    ' the account is identified by its full email address
+                    ' To identify the account, the code cycles through all the accounts available and selects a match
+                    ' if no data, or a non-matching email address is provided, then the default account is used
+                    ' note! not the same as send as - see below
+                    For Each outlookAccount In outlookApp.Session.Accounts
+                        If outlookAccount.SmtpAddress = df.Value Then Exit For
+                    Next
+                    If Not outlookAccount Is Nothing Then
+                        Set outlookMail.SendUsingAccount = outlookAccount
+                    Else
+                        errorString = errorString & vbCrLf & "Account not found: " & df.Value
+                    End If
+
+                Case "sendas", "sendonbehalfof"
+                    ' add in an address To send as or send on behalf of
+                    ' only added if a valid email address
+                    ' if the account does not have permissions, the email will be created but will be rejected by the Exchange server if sent
+                    If InStr(1, df.Value, "@", vbTextCompare) > 0 Then
+                        outlookMail.SentOnBehalfOfName = df.Value
+                    Else
+                        errorString = errorString & vbCrLf & "Send as email not recognised: " & df.Value
+                    End If
+
+                Case "replyto"
+                    ' add in an address To reply To
+                    ' only added if a valid email address
+                    If InStr(1, df.Value, "@", vbTextCompare) > 0 Then
+                        outlookMail.ReplyRecipients.Add (df.Value)
+                    Else
+                        errorString = errorString & vbCrLf & "Reply To email not recognised: " & df.Value
+                    End If
+
+                Case "followup"
+                    outlookMail.FlagStatus = olFlagMarked
+                    outlookMail.FlagRequest = "Follow up"
+
+                    If (IsNumeric(df.Value) Or IsDate(df.Value)) Then
+                        ' A date passed from an Excel table through mail merge will be formatted in US format ("m/d/yyyy"), but the function CDate
+                        ' uses the local format, e.g. ("d/m/yyyy"). However, CDate will convert both "15/1/2021" and "1/15/2021" To 15 January 2021
+                        ' irrespecitve of location settings.
+                        ' The next couple of lines test for whether the date is the wrong way round and flips the month and day if needed
+                        ' A date is believed To be wrong if both month and day are 12 or lower, if CDate parses the date 1/2/2020 as 1 February 2020
+                        ' and finally if the raw input from Excel is a date string (and not a number, which would be valid)
+                        inputDate = CDate(df.Value)
+                        If Day(inputDate) <= 12 And Month(inputDate) <= 12 And Month(CDate("1/2/2020")) = 2 And _
+                                (df.Value Like Format(inputDate, "d/m/yyyy") & "*" Or df.Value Like Format(inputDate, "dd/mm/yyyy") & "*") Then
+                            inputDate = DateSerial(Year(inputDate), Day(inputDate), Month(inputDate)) + TimeSerial(Hour(inputDate), Minute(inputDate), Second(inputDate))
+                        End If
+                        If inputDate < Now() - Date Then        ' time only, time is in the past so set time for "tomorrow"
+                            outlookMail.FlagDueBy = Date + 1 + inputDate
+                        ElseIf inputDate < 1 Then               ' time only, time is in the future so set time for "today" + days/time
+                            outlookMail.FlagDueBy = Date + inputDate
+                        ElseIf inputDate < 5000 Then            ' assume count of days To follow up (e.g. 7), add To current date and time
+                            outlookMail.FlagDueBy = Now() + inputDate
+                        ElseIf inputDate <= Now() Then          ' date or datetime in the past, set To due now (annoying, but anyhooose)
+                            outlookMail.FlagDueBy = Now()
+                        Else                                    ' date/datetime in future, use that value
+                            outlookMail.FlagDueBy = inputDate
+                        End If
+                    Else
+                        errorString = errorString & vbCrLf & "Delivery time value not recognised: " & df.Value
+                    End If
+
+                Case "attachment", "attachments"
+                    ' create a file system object To check the file
+                    ' if the file does not exist, then the attachment is not added and the error string is updated
+                    If fso Is Nothing Then Set fso = CreateObject("Scripting.FileSystemObject")
+
+                    If fso.FileExists(df.Value) Then
+                        ' add the attachment
+                        outlookMail.Attachments.Add df.Value
+                    Else
+                        errorString = errorString & vbCrLf & "Attachment: " & df.Value & " could not be found"
+                    End If
+            End Select  ' end test for the field names
+        End If      ' end check for the data value being blank
+    Next df     ' move on To the next record
+    ' set the collected To, CC and bcc fields (some systems do not allow the To field To be read
+    ' so we have To collect all To fields together first and then add them in one go
+    If Len(toString & ccString & bccString) = 0 Then errorString = errorString & vbCrLf & "No valid email addresses provided in To, CC and BCC fields"
+    If Len(subjectString) = 0 Then errorString = errorString & vbCrLf & "No subject provided"
+    outlookMail.To = toString
+    outlookMail.cc = ccString
+    outlookMail.BCC = bccString
+    outlookMail.Subject = subjectString
+    outlookMail.Display
+
+'    outlookMail.UserProperties.Add "Generator", olText, True
+'    outlookMail.UserProperties.Find("Generator").Value = "Imnoss"
+
+    ' check the send flag and send or save
+    If Len(errorString) > 0 Then
+        singleDoc.Content.Text = "Errors found: " & errorString
+        outlookMail.BodyFormat = 1 'olFormatPlain
+        outlookMail.Subject = "**Errors in mail merge: " & subjectString
+        outlookMail.Close 0 'olSave
+        If Not contOnError Then
+            If MsgBox("Errors were found when creating email, email has been saved as a draft with subject """ & _
+                    "**Errors in mail merge: " & subjectString & """ and a full list of errors in the body of the email" & vbLf & vbLf & _
+                    "Press OK To continue with remaining records and Cancel To exit the macro.", vbOKCancel, "Errors in email") = vbCancel Then
+                Exit Sub
+            End If
+            contOnError = True
+        End If
+    ElseIf sendFlag Then
+        outlookMail.Send
+    Else
+        outlookMail.Close 0 'olSave
+    End If
+    Set outlookMail = Nothing
+    singleDoc.Close False
+    Set singleDoc = Nothing
+    ' test if we have just created a document for the last record, if so we set lastRecordNum To zero To indicate that the loop should end, otherwise go To the next active record
+    If mm.DataSource.ActiveRecord >= lastRecordNum Then
+        lastRecordNum = 0
+    Else
+        mm.DataSource.ActiveRecord = wdNextRecord
+    End If
+Loop
+End Sub
+Private Function StripToLcaseLetters(inputString As String) As String
+' strips out all non-letters and converts To lowercase
+Dim i As Long
+Dim s As String
+For i = 1 To Len(inputString)
+    Select Case Asc(Mid(inputString, i, 1))
+        Case 65 To 90, 97 To 122
+            s = s & Mid(inputString, i, 1)
+    End Select
+Next i
+StripToLcaseLetters = LCase(s)
+End Function
