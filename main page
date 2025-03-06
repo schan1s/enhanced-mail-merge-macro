@@ -20,7 +20,7 @@ Dim subjectString As String
 Dim errorString As String
 Dim contOnError As Boolean
 Dim fso As Object
-
+ 
 ' identify the mail merge of the active document
 Set mm = ActiveDocument.MailMerge
 ' check for the mail merge state being that of a mail merge ready To go
@@ -30,15 +30,13 @@ If mm.State <> wdMainAndDataSource Then
             , vbOKOnly + vbCritical, "Error") = vbOK Then Exit Sub
 End If
 ' Give the user an opportunity To abort, and also the option To save the emails in drafts, or send immediately
-Select Case MsgBox("MailMerge To email has found " & mm.DataSource.RecordCount & " records." & vbLf & vbLf & _
+Select Case MsgBox("MailMerge to email has found " & mm.DataSource.RecordCount & " records." & vbLf & vbLf & _
                     "Macro will ignore records that have been unchecked in the 'Edit Recipients' dialog box." & vbLf & vbLf & _
-                    "Click 'Yes' To send the emails immediately, 'No' To save the emails in draft, and 'Cancel' To abort.", _
-                    vbYesNoCancel + vbDefaultButton2 + vbQuestion, "Send Emails")
-    Case vbCancel
+                    "Click 'Yes' to save the emails in draft, or 'No' to abort.", _
+                    vbYesNo + vbQuestion, "Save Emails to Draft")
+    Case vbNo
         Exit Sub
     Case vbYes
-        sendFlag = True
-    Case Else
         sendFlag = False
 End Select
 ActiveDocument.Content.Characters(1).Select
@@ -70,9 +68,9 @@ Do While lastRecordNum > 0
     ' run through all the fields in the mail merge data, when an email field is identified add the data To the appropriate field
     For Each df In mm.DataSource.DataFields
         ' first check for the field being populated for the active record (row), only check if there is data provided
-
+ 
         If Trim(df.Value) <> "" Then
-
+ 
             ' try matching the field name To accepted field names
             Select Case StripToLcaseLetters(df.Name)
                 Case "to"
@@ -212,7 +210,7 @@ Do While lastRecordNum > 0
                     Else
                         errorString = errorString & vbCrLf & "Account not found: " & df.Value
                     End If
-
+ 
                 Case "sendas", "sendonbehalfof"
                     ' add in an address To send as or send on behalf of
                     ' only added if a valid email address
@@ -222,7 +220,7 @@ Do While lastRecordNum > 0
                     Else
                         errorString = errorString & vbCrLf & "Send as email not recognised: " & df.Value
                     End If
-
+ 
                 Case "replyto"
                     ' add in an address To reply To
                     ' only added if a valid email address
@@ -231,11 +229,11 @@ Do While lastRecordNum > 0
                     Else
                         errorString = errorString & vbCrLf & "Reply To email not recognised: " & df.Value
                     End If
-
+ 
                 Case "followup"
                     outlookMail.FlagStatus = olFlagMarked
                     outlookMail.FlagRequest = "Follow up"
-
+ 
                     If (IsNumeric(df.Value) Or IsDate(df.Value)) Then
                         ' A date passed from an Excel table through mail merge will be formatted in US format ("m/d/yyyy"), but the function CDate
                         ' uses the local format, e.g. ("d/m/yyyy"). However, CDate will convert both "15/1/2021" and "1/15/2021" To 15 January 2021
@@ -262,12 +260,12 @@ Do While lastRecordNum > 0
                     Else
                         errorString = errorString & vbCrLf & "Delivery time value not recognised: " & df.Value
                     End If
-
+ 
                 Case "attachment", "attachments"
                     ' create a file system object To check the file
                     ' if the file does not exist, then the attachment is not added and the error string is updated
                     If fso Is Nothing Then Set fso = CreateObject("Scripting.FileSystemObject")
-
+ 
                     If fso.FileExists(df.Value) Then
                         ' add the attachment
                         outlookMail.Attachments.Add df.Value
@@ -286,10 +284,10 @@ Do While lastRecordNum > 0
     outlookMail.BCC = bccString
     outlookMail.Subject = subjectString
     outlookMail.Display
-
+ 
 '    outlookMail.UserProperties.Add "Generator", olText, True
 '    outlookMail.UserProperties.Find("Generator").Value = "Imnoss"
-
+ 
     ' check the send flag and send or save
     If Len(errorString) > 0 Then
         singleDoc.Content.Text = "Errors found: " & errorString
@@ -299,13 +297,11 @@ Do While lastRecordNum > 0
         If Not contOnError Then
             If MsgBox("Errors were found when creating email, email has been saved as a draft with subject """ & _
                     "**Errors in mail merge: " & subjectString & """ and a full list of errors in the body of the email" & vbLf & vbLf & _
-                    "Press OK To continue with remaining records and Cancel To exit the macro.", vbOKCancel, "Errors in email") = vbCancel Then
+                    "Press OK to continue with remaining records and Cancel to exit the macro.", vbOKCancel, "Errors in email") = vbCancel Then
                 Exit Sub
             End If
             contOnError = True
         End If
-    ElseIf sendFlag Then
-        outlookMail.Send
     Else
         outlookMail.Close 0 'olSave
     End If
